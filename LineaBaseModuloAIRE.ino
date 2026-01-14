@@ -4,7 +4,6 @@
 #include <SoftwareSerial.h>
 #include <Wire.h>
 
-
 /*
  * Project: LineaBaseModuloAIRE
  * Description: Unified firmware for Air Quality Module (ESP32-S3).
@@ -116,7 +115,6 @@ void initSensors() {
 
   // UARTs
   pmsSerial.begin(9600, SERIAL_8N1, PMS_RX_PIN, PMS_TX_PIN);
-
   co2Serial.begin(9600, SERIAL_8N1, MHZ19_RX_PIN, MHZ19_TX_PIN);
   co2Sensor.begin(co2Serial);
   co2Sensor.autoCalibration(false);
@@ -130,7 +128,7 @@ void setup() {
   // USB Serial
   Serial.begin(115200);
   // Hardware Serial 0 (Pines 43/44)
-  Serial0.begin(115200, SERIAL_8N1, UART0_RX, UART0_TX);
+  Serial0.begin(9600, SERIAL_8N1, UART0_RX, UART0_TX);
 
   delay(500);
   dualPrintln("\n=== MODULO AIRE: SISTEMA UNIFICADO ===");
@@ -225,6 +223,17 @@ void loop() {
 
     dualPrintln("-------------------------------------------");
   }
+
+  // 4. Puente: Serial0 -> Serial (USB)
+  while (Serial0.available() > 0) {
+    Serial.write(Serial0.read());
+  }
+
+  /*/ Opcional: Serial (USB) -> Serial0 (Para comandos remotos)
+  while (Serial.available() > 0) {
+    Serial0.write(Serial.read());
+  }
+*/
 
   delay(10);
 }
