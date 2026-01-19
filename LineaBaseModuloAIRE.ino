@@ -177,10 +177,10 @@ void loop() {
   }
 
   // 3. Impresión Periódica (Cada 2 segundos)
-  if (millis() - lastPrintMs >= 2000) {
+  if (millis() - lastPrintMs >= 3000) {
     lastPrintMs = millis();
 
-    dualPrintln("\n---------------- SCAN DATA ----------------");
+    dualPrintln("\n- SCAN DATA -");
 
     // ADS
     for (uint8_t b = 0; b < NUM_BUSES; b++) {
@@ -221,7 +221,7 @@ void loop() {
     // VOC
     dualPrintln("VOC: " + String(tvoc_ugm3) + " ug/m3");
 
-    dualPrintln("-------------------------------------------");
+    // dualPrintln("-------------------------------------------");
   }
 
   // 4. Puente: Serial0 -> Serial (USB)
