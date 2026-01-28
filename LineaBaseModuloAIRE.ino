@@ -28,12 +28,12 @@
 #define PMS_TX_PIN 2
 
 // UART2 (MH-Z19 CO2)
-#define MHZ19_RX_PIN 4 // ESP32 RX <- Sensor TX
-#define MHZ19_TX_PIN 3 // ESP32 TX -> Sensor RX
+#define MHZ19_RX_PIN 3 // ESP32 RX <- Sensor TX
+#define MHZ19_TX_PIN 4 // ESP32 TX -> Sensor RX
 
 // SoftwareSerial (VOC Winsen)
-#define VOC_RX_PIN 6 // ESP32 RX <- Sensor TX
-#define VOC_TX_PIN 5 // ESP32 TX -> Sensor RX
+#define VOC_RX_PIN 5 // ESP32 RX <- Sensor TX
+#define VOC_TX_PIN 6 // ESP32 TX -> Sensor RX
 
 /* ===================== OBJETOS Y VARIABLES ===================== */
 TwoWire I2C_0 = TwoWire(0);
@@ -81,6 +81,57 @@ void dualPrintln(String msg = "") {
   Serial0.println(msg);
 }
 
+/* ===================== FUNCIÓN DE REPORTE ===================== */
+// Genera el reporte de todos los sensores.
+// modoRaw = true escribe solo valores RAW (para Serial0/ESP Receptor)
+// modoRaw = false escribe Voltajes y RAW (para Serial USB/Humano)
+void generarReporte(Stream &puerto, bool modoRaw) {
+  // ADS
+  for (uint8_t b = 0; b < NUM_BUSES; b++) {
+    for (uint8_t i = 0; i < NUM_ADS; i++) {
+      if (ads_ok[b][i]) {
+        String adsMsg = "ADS," + String(BUS_NAMES[b]) + ",0x" +
+                        String(ADS_ADDRESSES[i], HEX);
+        for (int ch = 0; ch < 4; ch++) {
+          int16_t raw = ads[b][i].readADC_SingleEnded(ch);
+          if (modoRaw) {
+            adsMsg += ",V" + String(ch) + ":" + String(raw);
+          } else {
+            float volts = ads[b][i].computeVolts(raw);
+            adsMsg += ",V" + String(ch) + ":" + String(volts, 3) +
+                      "(R:" + String(raw) + ")";
+          }
+        }
+        puerto.println(adsMsg);
+      }
+    }
+  }
+
+  // PMS
+  String pmsMsg = "PMS,PM1.0:" + String(PMS1) + ",PM2.5:" + String(PMS2_5) +
+                  ",PM10:" + String(PMS10) + ",T:" + String(TPS / 10.0, 1) +
+                  ",RH:" + String(HDS / 10.0, 1) + ",HCHO:" + String(FMHDSB, 3);
+  puerto.println(pmsMsg);
+
+  // CO2
+  if (co2_ok) {
+    co2Ppm = co2Sensor.getCO2();
+    if (co2Sensor.errorCode == RESULT_OK) {
+      co2Raw = co2Sensor.getCO2Raw();
+      puerto.println("CO2,PPM:" + String(co2Ppm, 0) +
+                     ",RAW:" + String(co2Raw, 0));
+    } else {
+      puerto.println("CO2,ERR:" + String(co2Sensor.errorCode));
+    }
+  }
+
+  // VOC
+  puerto.println("VOC,TVOC:" + String(tvoc_ugm3));
+
+  // Fin de Trama
+  puerto.println("END");
+}
+
 // Checksum PMS5003
 uint16_t pmsChecksum(const uint8_t *buf, int len) {
   uint16_t sum = 0;
@@ -109,6 +160,21 @@ void initSensors() {
       buses[b]->beginTransmission(ADS_ADDRESSES[i]);
       if (buses[b]->endTransmission() == 0) {
         ads_ok[b][i] = ads[b][i].begin(ADS_ADDRESSES[i], buses[b]);
+        if (ads_ok[b][i]) {
+          // ================================================================
+          // AJUSTE DE GANANCIA (Descomenta solo una línea para aplicar):
+          // ================================================================
+          // ads[b][i].setGain(GAIN_TWOTHIRDS); // 2/3x gain +/- 6.144V  1 bit =
+          // 0.1875mV (default) ads[b][i].setGain(GAIN_ONE);       // 1x gain
+          // +/- 4.096V  1 bit = 0.125mV ads[b][i].setGain(GAIN_TWO);       //
+          // 2x gain   +/- 2.048V  1 bit = 0.0625mV
+          ads[b][i].setGain(
+              GAIN_FOUR); // 4x gain   +/- 1.024V  1 bit = 0.03125mV
+          // ads[b][i].setGain(GAIN_EIGHT);     // 8x gain   +/- 0.512V  1 bit =
+          // 0.015625mV ads[b][i].setGain(GAIN_SIXTEEN);   // 16x gain  +/-
+          // 0.256V  1 bit = 0.0078125mV
+          // ================================================================
+        }
       }
     }
   }
@@ -176,57 +242,28 @@ void loop() {
     }
   }
 
-  // 3. Impresión Periódica (Cada 2 segundos)
+  // 3. Impresión Periódica en USB (Cada 3 segundos) solo para humano
   if (millis() - lastPrintMs >= 3000) {
     lastPrintMs = millis();
-
-    dualPrintln("\n- SCAN DATA -");
-
-    // ADS
-    for (uint8_t b = 0; b < NUM_BUSES; b++) {
-      for (uint8_t i = 0; i < NUM_ADS; i++) {
-        if (ads_ok[b][i]) {
-          String adsMsg = "ADS," + String(BUS_NAMES[b]) + ",0x" +
-                          String(ADS_ADDRESSES[i], HEX);
-          for (int ch = 0; ch < 4; ch++) {
-            adsMsg += ",V" + String(ch) + ":" +
-                      String(ads[b][i].computeVolts(
-                                 ads[b][i].readADC_SingleEnded(ch)),
-                             3);
-          }
-          dualPrintln(adsMsg);
-        }
-      }
-    }
-
-    // PMS
-    dualPrintln("PMS: PM1.0=" + String(PMS1) + ", PM2.5=" + String(PMS2_5) +
-                ", PM10=" + String(PMS10) + " ug/m3");
-    dualPrintln("PMS: T=" + String(TPS / 10) + "." + String(TPS % 10) +
-                "C, RH=" + String(HDS / 10) + "." + String(HDS % 10) +
-                "%, HCHO=" + String(FMHDSB, 3) + " mg/m3");
-
-    // CO2
-    if (co2_ok) {
-      co2Ppm = co2Sensor.getCO2();
-      if (co2Sensor.errorCode == RESULT_OK) {
-        co2Raw = co2Sensor.getCO2Raw();
-        dualPrintln("CO2: " + String(co2Ppm, 0) +
-                    " ppm | RAW: " + String(co2Raw, 0));
-      } else {
-        dualPrintln("CO2: [ERR " + String(co2Sensor.errorCode) + "]");
-      }
-    }
-
-    // VOC
-    dualPrintln("VOC: " + String(tvoc_ugm3) + " ug/m3");
-
-    // dualPrintln("-------------------------------------------");
+    // El reporte al USB es compelto (humano)
+    generarReporte(Serial, false);
   }
 
-  // 4. Puente: Serial0 -> Serial (USB)
+  // 4. Escucha de comandos en Serial0 (A pedido)
+  // Usamos peek() para no consumir datos si queremos que el puente (paso 5)
+  // también los vea, o simplemente procesamos y lo que sobre va al puente.
   while (Serial0.available() > 0) {
-    Serial.write(Serial0.read());
+    // Leemos una línea completa para buscar el comando
+    String input = Serial0.readStringUntil('\n');
+    input.trim();
+
+    if (input == "SCAN") {
+      // El reporte al enlace es RAW (máquina)
+      generarReporte(Serial0, true);
+    } else if (input.length() > 0) {
+      // Si no es SCAN, lo mandamos al puente USB para ver qué envió el otro ESP
+      Serial.println("[DE RECEPTOR]: " + input);
+    }
   }
 
   /*/ Opcional: Serial (USB) -> Serial0 (Para comandos remotos)
